@@ -1,4 +1,4 @@
-<script lang="ts">
+<script>
 /// <reference types="@types/google.maps" />
 import { defineComponent } from 'vue';
 
@@ -18,7 +18,7 @@ export default defineComponent({
       await customElements.whenDefined('gmp-map');
       await this.$nextTick();
 
-      const mapEl = this.$refs.map as HTMLElement & { innerMap?: google.maps.Map };
+      const mapEl = this.$refs.map;
       if (!mapEl?.innerMap) {
         // Wait a tiny bit more if innerMap isn't ready
         setTimeout(() => this.init(), 100);
@@ -31,11 +31,9 @@ export default defineComponent({
     async init() {
       await customElements.whenDefined('gmp-map');
 
-      const map = this.$refs.map as HTMLElement & { innerMap?: google.maps.Map };
-      const marker = this.$refs.marker as HTMLElement & { position?: google.maps.LatLng };
-      const placePicker = document.querySelector('gmpx-place-picker') as HTMLElement & {
-        value?: google.maps.places.PlaceResult;
-      };
+      const map = this.$refs.map;
+      const marker = this.$refs.marker;
+      const placePicker = document.querySelector('gmpx-place-picker');
       const infowindow = new google.maps.InfoWindow();
 
       map.innerMap?.setOptions({
