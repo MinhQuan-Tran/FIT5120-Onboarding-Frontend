@@ -1,20 +1,28 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
-import HelloWorld from './components/HelloWorld.vue'
+import { RouterLink, RouterView } from 'vue-router';
 </script>
 
 <template>
   <header>
-    <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="125" height="125" />
-
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-
-      <nav>
-        <RouterLink to="/">Home</RouterLink>
-        <RouterLink to="/about">About</RouterLink>
-      </nav>
-    </div>
+    <nav>
+      <RouterLink to="/">
+        <img width="48" height="48" src="https://img.icons8.com/fluency/48/home.png" alt="home" />
+      </RouterLink>
+      <RouterLink to="/map"
+        ><img
+          width="48"
+          height="48"
+          src="https://img.icons8.com/fluency/48/map-marker.png"
+          alt="map-marker"
+      /></RouterLink>
+      <RouterLink to="/data"
+        ><img
+          width="48"
+          height="48"
+          src="https://img.icons8.com/fluency/48/bar-chart.png"
+          alt="bar-chart"
+      /></RouterLink>
+    </nav>
   </header>
 
   <RouterView />
@@ -33,13 +41,12 @@ header {
 
 nav {
   width: 100%;
-  font-size: 12px;
   text-align: center;
-  margin-top: 2rem;
+  margin-bottom: 1rem;
 }
 
 nav a.router-link-exact-active {
-  color: var(--color-text);
+  border-bottom: 5px solid hsl(160, 100%, 37%);
 }
 
 nav a.router-link-exact-active:hover {
@@ -47,7 +54,8 @@ nav a.router-link-exact-active:hover {
 }
 
 nav a {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   padding: 0 1rem;
   border-left: 1px solid var(--color-border);
 }

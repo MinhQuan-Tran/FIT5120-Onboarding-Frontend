@@ -1,12 +1,21 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="">
   <head>
-    <meta charset="UTF-8">
-    <link rel="icon" href="/favicon.ico">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script
+      type="module"
+      src="https://ajax.googleapis.com/ajax/libs/@googlemaps/extended-component-library/0.6.11/index.min.js"
+    ></script>
     <title>Vite App</title>
   </head>
   <body>
+    <gmpx-api-loader
+      key="AIzaSyDYxbh-PKlGBng4S6X2b_vb6b2TgpWkkdg"
+      solution-channel="GMP_GE_mapsandplacesautocomplete_v2"
+    >
+    </gmpx-api-loader>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
