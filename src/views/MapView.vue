@@ -15,6 +15,13 @@ export default defineComponent({
 
   methods: {
     async loadWhenReady() {
+      if (!this.apiKey) {
+        console.error('Google Maps API key is not set.');
+        return;
+      }
+
+      document.querySelector('gmpx-api-loader').setAttribute('key', this.apiKey);
+
       await customElements.whenDefined('gmp-map');
       await this.$nextTick();
 
@@ -38,13 +45,11 @@ export default defineComponent({
 
       map.innerMap?.setOptions({
         mapTypeControl: false,
-        center: { lat: 40.749933, lng: -73.98633 },
-        zoom: 13,
+        center: { lat: -37.81230926513672, lng: 144.96234130859375 },
+        zoom: 14,
       });
 
       placePicker?.addEventListener('gmpx-placechange', () => {
-        console.log('placePicker value changed', placePicker.value);
-
         const place = placePicker.value;
 
         if (!place?.location) {
@@ -82,7 +87,7 @@ export default defineComponent({
       <gmpx-place-picker ref="place-picker" placeholder="Enter an address"></gmpx-place-picker>
     </div>
 
-    <gmp-map ref="map" map-id="DEMO_MAP_ID">
+    <gmp-map ref="map" map-id="11149c6c4a20631bbf3ddc4f">
       <gmp-advanced-marker ref="marker"></gmp-advanced-marker>
     </gmp-map>
   </main>
