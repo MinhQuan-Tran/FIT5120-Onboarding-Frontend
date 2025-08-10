@@ -1,16 +1,48 @@
 <script>
-/// <reference types="@types/google.maps" />
-import { defineComponent } from 'vue';
+import { createApp } from 'vue';
+import MapControls from '@/components/MapControls.vue';
+import MapInfoWindow from '@/components/MapInfoWindow.vue';
 
-export default defineComponent({
+export default {
   data() {
     return {
       apiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+      layerVisible: false,
+      mapInstance: null,
+      markerRef: null,
+      lgaLayer: null,
+      controlsApp: null,
+      controlsEl: null,
+      inited: false,
+      geojsonLoaded: false,
+      popupApp: null,
+      popupEl: null,
+      infoWindow: null, // shared InfoWindow
     };
   },
 
   mounted() {
     this.loadWhenReady();
+  },
+
+  beforeUnmount() {
+    if (this.controlsApp && this.controlsEl) {
+      this.controlsApp.unmount();
+      this.controlsEl.remove();
+    }
+    if (this.lgaLayer) {
+      this.lgaLayer.setMap(null);
+      this.lgaLayer = null;
+    }
+    if (this.popupApp && this.popupEl) {
+      this.popupApp.unmount();
+      this.popupEl = null;
+      this.popupApp = null;
+    }
+    if (this.infoWindow) {
+      this.infoWindow.close();
+      this.infoWindow = null;
+    }
   },
 
   methods: {
@@ -19,62 +51,277 @@ export default defineComponent({
         console.error('Google Maps API key is not set.');
         return;
       }
-
-      document.querySelector('gmpx-api-loader').setAttribute('key', this.apiKey);
+      document.querySelector('gmpx-api-loader')?.setAttribute('key', this.apiKey);
 
       await customElements.whenDefined('gmp-map');
       await this.$nextTick();
 
-      const mapEl = this.$refs.map;
-      if (!mapEl?.innerMap) {
-        // Wait a tiny bit more if innerMap isn't ready
-        setTimeout(() => this.init(), 100);
+      const mapEl = this.$refs.map?.innerMap;
+      if (!mapEl) {
+        setTimeout(() => this.loadWhenReady(), 100);
         return;
       }
 
+      this.mapInstance = mapEl;
+      this.markerRef = this.$refs.marker;
       this.init();
     },
 
     async init() {
-      await customElements.whenDefined('gmp-map');
+      if (this.inited) return;
+      this.inited = true;
 
-      const map = this.$refs.map;
-      const marker = this.$refs.marker;
-      const placePicker = document.querySelector('gmpx-place-picker');
-      const infowindow = new google.maps.InfoWindow();
+      const map = this.mapInstance;
+      const marker = this.markerRef;
+      if (!map || !marker) return;
 
-      map.innerMap?.setOptions({
+      map.setOptions({
         mapTypeControl: false,
         center: { lat: -37.81230926513672, lng: 144.96234130859375 },
-        zoom: 14,
+        mapId: '11149c6c4a20631b72145c7a',
       });
 
-      placePicker?.addEventListener('gmpx-placechange', () => {
-        const place = placePicker.value;
+      // One shared InfoWindow
+      this.infoWindow = new google.maps.InfoWindow();
 
-        if (!place?.location) {
-          window.alert(`No details available for input: '${place?.name}'`);
-          infowindow.close();
-          marker.position = null;
-          return;
+      // Disable default map.data usage
+      map.data.setMap(null);
+
+      // Local Data layer
+      if (!this.lgaLayer) {
+        this.lgaLayer = new google.maps.Data({ map });
+        this.lgaLayer.setStyle(() => ({
+          strokeColor: '#2962FF',
+          strokeWeight: 3,
+          strokeOpacity: 1,
+          fillColor: '#2962FF',
+          fillOpacity: 0.25,
+          visible: this.layerVisible,
+        }));
+      }
+
+      // Load GeoJSON once
+      if (!this.geojsonLoaded) {
+        try {
+          const gj = await fetch('/melbourne_lga_24600.geojson').then((r) => r.json());
+          this.lgaLayer.forEach((f) => this.lgaLayer.remove(f));
+          const added = this.lgaLayer.addGeoJson(gj);
+          this.geojsonLoaded = true;
+
+          const bounds = new google.maps.LatLngBounds();
+          added.forEach((f) => f.getGeometry()?.forEachLatLng((ll) => bounds.extend(ll)));
+          if (!bounds.isEmpty()) map.fitBounds(bounds);
+        } catch (e) {
+          console.error('Failed to load local GeoJSON. Ensure the file is in /public.', e);
         }
+      }
 
-        if (place.viewport) {
-          map.innerMap?.fitBounds(place.viewport);
-        } else {
-          map.innerMap?.setCenter(place.location);
-          map.innerMap?.setZoom(17);
-        }
+      // Place picker -> shared custom info window
+      const placePicker = document.querySelector('gmpx-place-picker');
+      if (placePicker && !placePicker.__popupBound) {
+        placePicker.__popupBound = true;
 
-        marker.position = place.location;
-        infowindow.setContent(
-          `<strong>${place.displayName}</strong><br><span>${place.formattedAddress}</span>`,
+        placePicker.addEventListener('gmpx-placechange', () => {
+          const place = placePicker.value;
+          if (!place || !place.location) {
+            window.alert(`No details available for input: '${place?.name}'`);
+            this.infoWindow.close();
+            marker.position = null;
+            return;
+          }
+
+          if (place.viewport) {
+            map.fitBounds(place.viewport);
+          } else {
+            map.setCenter(place.location);
+            map.setZoom(17);
+          }
+          marker.position = place.location;
+
+          const title = place.displayName ?? place.name ?? 'Selected place';
+          const address = place.formattedAddress ?? '';
+          const lat =
+            typeof place.location.lat === 'function' ? place.location.lat() : place.location.lat;
+          const lng =
+            typeof place.location.lng === 'function' ? place.location.lng() : place.location.lng;
+          const link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+            title,
+          )}`;
+
+          // anchor to marker; no explicit position
+          this.openInfoWindow({ title, address, lat, lng, linkHref: link }, marker, null);
+        });
+      }
+
+      // POI clicks on the map -> intercept and show the same custom info window
+      await google.maps.importLibrary('places');
+      const places = new google.maps.places.PlacesService(map);
+
+      map.addListener('click', (e) => {
+        if (!e.placeId) return;
+
+        // Stop Google’s default POI bubble
+        e.stop();
+
+        places.getDetails(
+          {
+            placeId: e.placeId,
+            fields: ['name', 'formatted_address', 'geometry.location'],
+          },
+          (place, status) => {
+            if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location)
+              return;
+
+            const loc = place.geometry.location;
+            const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
+            const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
+
+            this.openInfoWindow(
+              {
+                title: place.name ?? 'Place',
+                address: place.formatted_address ?? '',
+                lat,
+                lng,
+                linkHref: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                  place.name ?? 'Place',
+                )}`,
+              },
+              null, // no anchor
+              loc, // open at this coordinate
+            );
+          },
         );
-        infowindow.open(map.innerMap, marker);
+      });
+
+      // Optional: clicking your marker also reuses the same info window
+      marker.addEventListener('gmp-click', () => {
+        const pos = marker.position;
+        const lat = typeof pos.lat === 'function' ? pos.lat() : pos.lat;
+        const lng = typeof pos.lng === 'function' ? pos.lng() : pos.lng;
+        this.openInfoWindow(
+          {
+            title: 'Marker',
+            address: 'Selected marker position',
+            lat,
+            lng,
+            linkHref: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+          },
+          marker,
+          null,
+        );
+      });
+
+      // Mount MapControls
+      this.mountControls();
+
+      // Debug: feature count on zoom
+      map.addListener('zoom_changed', () => {
+        let count = 0;
+        this.lgaLayer.forEach(() => count++);
+        // console.log('zoom', map.getZoom(), 'features in layer', count);
       });
     },
+
+    // Mount Vue component into a detached DIV, reuse shared InfoWindow
+    // Mount Vue component into a detached DIV, reuse shared InfoWindow
+    openInfoWindow(props, anchor, position) {
+      if (!this.mapInstance || !this.infoWindow) return;
+
+      // Unmount any previous popup app
+      if (this.popupApp && this.popupEl) {
+        this.popupApp.unmount();
+        this.popupEl = null;
+        this.popupApp = null;
+      }
+
+      // Mount your Vue info window content
+      const el = document.createElement('div');
+      this.popupApp = createApp(MapInfoWindow, props);
+      this.popupApp.mount(el);
+      this.popupEl = el;
+
+      this.infoWindow.setContent(el);
+
+      // Strip Google’s default padding + style close button
+      const mapDiv = this.mapInstance.getDiv();
+      google.maps.event.addListenerOnce(this.infoWindow, 'domready', () => {
+        const iwC = mapDiv.querySelector('.gm-style-iw-c');
+        const iwD = mapDiv.querySelector('.gm-style-iw-d');
+        const iw = mapDiv.querySelector('.gm-style-iw');
+        [iwC, iwD, iw].forEach((node) => {
+          if (node) node.style.padding = '8px';
+        });
+
+        const titleContainer = mapDiv.querySelector('.gm-style-iw-ch');
+        if (titleContainer) {
+          titleContainer.style.padding = '0';
+          titleContainer.textContent = props && props.title ? String(props.title) : '';
+          titleContainer.style.fontWeight = 'bold';
+          titleContainer.style.fontSize = '24px';
+          titleContainer.style.lineHeight = '32px';
+          titleContainer.style.color = '#2962FF';
+        }
+
+        const closeButton = mapDiv.querySelector('button[aria-label="Close"]');
+        if (closeButton) {
+          closeButton.style.width = '24px';
+          closeButton.style.height = '24px';
+          closeButton.style.position = 'static';
+          closeButton.style.margin = '0 0 auto auto';
+
+          const span = closeButton.querySelector('span');
+          if (span) {
+            span.style.margin = 'auto';
+          }
+        }
+
+        const dialogContainer = mapDiv.querySelector('.gm-style-iw-d');
+        if (dialogContainer) {
+          dialogContainer.style.padding = '0';
+        }
+      });
+
+      // Open by anchor or position
+      if (position) {
+        this.infoWindow.setPosition(position);
+        this.infoWindow.open(this.mapInstance);
+      } else if (anchor) {
+        this.infoWindow.open(this.mapInstance, anchor);
+      } else {
+        this.infoWindow.open(this.mapInstance);
+      }
+    },
+
+    mountControls() {
+      if (!this.mapInstance) return;
+      const map = this.mapInstance;
+      if (this.controlsApp && this.controlsEl) return;
+
+      const rootEl = document.createElement('div');
+      this.controlsEl = rootEl;
+
+      this.controlsApp = createApp(MapControls, {
+        initialLgaVisible: this.layerVisible,
+        onToggleLga: (visible) => {
+          this.layerVisible = visible;
+          if (this.lgaLayer) {
+            this.lgaLayer.setStyle(() => ({
+              strokeColor: '#2962FF',
+              strokeWeight: 3,
+              strokeOpacity: 1,
+              fillColor: '#2962FF',
+              fillOpacity: 0.25,
+              visible: this.layerVisible,
+            }));
+          }
+        },
+      });
+
+      this.controlsApp.mount(rootEl);
+      map.controls[google.maps.ControlPosition.TOP_LEFT].push(rootEl);
+    },
   },
-});
+};
 </script>
 
 <template>
@@ -87,10 +334,8 @@ export default defineComponent({
       <gmpx-place-picker ref="place-picker" placeholder="Enter an address"></gmpx-place-picker>
     </div>
 
-    <gmp-map ref="map" map-id="11149c6c4a20631bbf3ddc4f">
+    <gmp-map ref="map">
       <gmp-advanced-marker ref="marker"></gmp-advanced-marker>
     </gmp-map>
   </main>
 </template>
-
-<style scoped></style>
