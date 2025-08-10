@@ -15,13 +15,6 @@ import { RouterLink, RouterView } from 'vue-router';
           src="https://img.icons8.com/fluency/48/map-marker.png"
           alt="map-marker"
       /></RouterLink>
-      <RouterLink to="/data"
-        ><img
-          width="48"
-          height="48"
-          src="https://img.icons8.com/fluency/48/bar-chart.png"
-          alt="bar-chart"
-      /></RouterLink>
     </nav>
   </header>
 
