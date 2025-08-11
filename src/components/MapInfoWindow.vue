@@ -1,5 +1,13 @@
 <script lang="ts">
-import { defineComponent, type CSSProperties, onMounted, onBeforeUnmount, watch, ref } from 'vue';
+import {
+  defineComponent,
+  type CSSProperties,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+  ref,
+  nextTick,
+} from 'vue';
 import {
   Chart,
   BarController,
@@ -15,9 +23,8 @@ import {
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend, Title);
 
 type Day = 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
-
-type Hour = `${number}${number}:00`; // "00:00".."23:00"
-type DaySeries = readonly number[]; // length 24, 0..100
+type Hour = `${number}${number}:00`;
+type DaySeries = readonly number[];
 type BusyDataset = Record<Day, DaySeries>;
 
 function hourLabels(): Hour[] {
@@ -29,7 +36,6 @@ function hourLabels(): Hour[] {
   return labels;
 }
 
-// Dummy data: tweak shapes a bit per day
 const DUMMY_BUSY: BusyDataset = {
   Monday: Array.from({ length: 24 }, (_, h) =>
     h < 6 ? 8 : h < 9 ? 35 + (h - 6) * 15 : h < 17 ? 65 : h < 20 ? 55 : 20,
@@ -65,20 +71,58 @@ export default defineComponent({
   computed: {
     boxStyle(): CSSProperties {
       return {
-        color: '#333',
+        color: '#222',
       };
     },
-    lineStyle(): CSSProperties {
-      return { margin: '2px 0' };
+    rowStyle(): CSSProperties {
+      return { margin: '6px 0' };
     },
     linkStyle(): CSSProperties {
-      return { color: '#FF6D00', textDecoration: 'underline' };
+      return { color: '#2962FF', textDecoration: 'none' };
+    },
+    selectStyle(): CSSProperties {
+      return {
+        appearance: 'none',
+        WebkitAppearance: 'none',
+        MozAppearance: 'none',
+        padding: '6px 28px 6px 10px',
+        border: '1px solid #E0E0E0',
+        borderRadius: '8px',
+        background: `#fff url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%2399A1A8' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 8px center`,
+        fontSize: '12px',
+      };
+    },
+    labelStyle(): CSSProperties {
+      return { marginRight: '8px', fontWeight: 600, color: '#444' };
+    },
+    chartWrapStyle(): CSSProperties {
+      return { height: '190px', width: '100%', minWidth: '240px' };
+    },
+    headerStyle(): CSSProperties {
+      return {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '8px',
+        margin: '2px 0 8px',
+      };
+    },
+    badgeStyle(): CSSProperties {
+      return {
+        display: 'inline-block',
+        padding: '2px 6px',
+        borderRadius: '999px',
+        fontSize: '14px',
+        background: '#EEF2FF',
+        color: '#3D5AFE',
+      };
     },
   },
   setup() {
     const selectedDay = ref<Day>('Monday');
     const canvasRef = ref<HTMLCanvasElement | null>(null);
     const chartRef = ref<Chart<'bar'> | null>(null);
+    const ro = ref<ResizeObserver | null>(null);
     const labels = hourLabels();
 
     const buildConfig = (day: Day): ChartConfiguration<'bar'> => ({
@@ -87,88 +131,170 @@ export default defineComponent({
         labels,
         datasets: [
           {
-            label: `${day} busyness (%)`,
-            data: DUMMY_BUSY[day].slice(), // copy
-            backgroundColor: 'rgba(41, 98, 255, 0.65)',
-            borderColor: '#2962FF',
+            label: `${day} busyness`,
+            data: DUMMY_BUSY[day].slice(),
+            xAxisID: 'x',
+            yAxisID: 'y',
+            backgroundColor: 'rgba(61, 90, 254, 0.75)',
+            borderColor: '#3D5AFE',
             borderWidth: 1,
+            borderRadius: 6,
+            hoverBorderWidth: 1,
+            barPercentage: 0.9,
+            categoryPercentage: 0.9,
           },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { display: true, position: 'top' },
-          title: { display: true, text: 'Live busyness by hour' },
-          tooltip: { mode: 'index', intersect: false },
+          legend: { display: false },
+          title: { display: false },
+          tooltip: {
+            callbacks: {
+              title(items) {
+                return items[0]?.label ?? '';
+              },
+              label(ctx) {
+                return ` Busy: ${typeof ctx.parsed.y === 'number' ? ctx.parsed.y : 0}%`;
+              },
+            },
+          },
         },
         scales: {
           x: {
-            title: { display: true, text: 'Hour' },
-            ticks: { maxRotation: 0, autoSkip: true },
+            grid: { display: false },
+            ticks: {
+              maxRotation: 0,
+              autoSkip: false,
+              callback(_val, idx) {
+                return (idx as number) % 3 === 0 ? labels[idx as number] : '';
+              },
+              font: { size: 10 },
+            },
           },
           y: {
-            title: { display: true, text: 'Busyness (%)' },
             beginAtZero: true,
             suggestedMax: 100,
+            ticks: {
+              stepSize: 25,
+              callback(value) {
+                return `${value}%`;
+              },
+              font: { size: 10 },
+            },
+            grid: { color: 'rgba(0,0,0,0.06)' },
           },
         },
       },
     });
 
-    onMounted(() => {
+    const hasScales = (c: Chart<'bar'> | null): boolean => {
+      const s = c?.scales as unknown as Record<string, unknown> | undefined;
+      return !!(s && s['x'] && s['y']);
+    };
+
+    const createChart = (day: Day): void => {
       const ctx = canvasRef.value?.getContext('2d');
       if (!ctx) return;
-      chartRef.value = new Chart(ctx, buildConfig(selectedDay.value));
+      chartRef.value?.destroy();
+      chartRef.value = new Chart(ctx, buildConfig(day));
+    };
+
+    // Wait until the canvas is connected and has non-zero size (InfoWindow timing)
+    const waitForCanvas = async (): Promise<void> => {
+      await nextTick();
+      let tries = 0;
+      while (tries < 20) {
+        // ~20 frames max
+        const el = canvasRef.value;
+        if (el && el.isConnected) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) return;
+        }
+        await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+        tries++;
+      }
+    };
+
+    onMounted(async () => {
+      await waitForCanvas();
+      createChart(selectedDay.value);
+
+      // Keep responsive inside InfoWindow
+      if (canvasRef.value?.parentElement) {
+        ro.value = new ResizeObserver(() => chartRef.value?.resize());
+        ro.value.observe(canvasRef.value.parentElement);
+      }
     });
 
     onBeforeUnmount(() => {
+      ro.value?.disconnect();
+      ro.value = null;
       chartRef.value?.destroy();
       chartRef.value = null;
     });
 
-    watch(selectedDay, (day) => {
-      const chart = chartRef.value;
-      if (!chart) return;
-      // Update dataset values in place for smoothness
-      chart.data.datasets[0].label = `${day} busyness (%)`;
-      chart.data.datasets[0].data = DUMMY_BUSY[day].slice();
-      chart.update();
-    });
-
-    return {
+    watch(
       selectedDay,
-      canvasRef,
-    };
+      (day) => {
+        queueMicrotask(() => {
+          const chart = chartRef.value;
+          if (!chart || !hasScales(chart)) {
+            createChart(day);
+            return;
+          }
+          try {
+            chart.data.datasets[0].label = `${day} busyness`;
+            chart.data.datasets[0].data = DUMMY_BUSY[day].slice();
+            chart.update();
+          } catch {
+            // If update fails during a reflow, rebuild
+            createChart(day);
+          }
+        });
+      },
+      { flush: 'post' },
+    );
+
+    return { selectedDay, canvasRef };
   },
 });
 </script>
 
 <template>
   <div :style="boxStyle">
-    <p :style="lineStyle">{{ address }}</p>
+    <!-- Address -->
+    <p :style="rowStyle">{{ address }}</p>
+
+    <!-- Header row: Busy hours + Day selection -->
+    <div :style="headerStyle">
+      <span :style="badgeStyle">Busy hours</span>
+
+      <div>
+        <label for="busy-day" :style="labelStyle">Day</label>
+        <select id="busy-day" v-model="selectedDay" :style="selectStyle">
+          <option>Monday</option>
+          <option>Tuesday</option>
+          <option>Wednesday</option>
+          <option>Thursday</option>
+          <option>Friday</option>
+          <option>Saturday</option>
+          <option>Sunday</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Bar chart -->
+    <div :style="chartWrapStyle">
+      <canvas ref="canvasRef" style="display: block; width: 100%; height: 100%"></canvas>
+    </div>
+
+    <!-- Link -->
     <a v-if="linkHref" :href="linkHref" target="_blank" rel="noopener" :style="linkStyle">
       View on Google Maps
     </a>
-
-    <!-- Day selector -->
-    <div style="margin: 8px 0">
-      <label for="busy-day" style="margin-right: 8px">Day</label>
-      <select id="busy-day" v-model="selectedDay">
-        <option>Monday</option>
-        <option>Tuesday</option>
-        <option>Wednesday</option>
-        <option>Thursday</option>
-        <option>Friday</option>
-        <option>Saturday</option>
-        <option>Sunday</option>
-      </select>
-    </div>
-
-    <!-- Bar chart container -->
-    <div style="height: 180px; width: 260px">
-      <canvas ref="canvasRef"></canvas>
-    </div>
   </div>
 </template>
