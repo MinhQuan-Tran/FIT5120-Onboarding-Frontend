@@ -4,7 +4,7 @@
   box-sizing: border-box;
   width: 100dvw;
   height: 100dvh;
-  padding: 2rem;
+  padding: 1rem;
   font-weight: normal;
   display: flex;
   flex-direction: column;
