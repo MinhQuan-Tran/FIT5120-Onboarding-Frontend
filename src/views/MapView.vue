@@ -1,7 +1,8 @@
 <script>
 import { createApp } from 'vue';
 import MapControls from '@/components/MapControls.vue';
-import MapInfoWindow from '@/components/MapInfoWindow.vue';
+import DestinationInsights from '@/components/DestinationInsights.vue';
+import TripPlanner from '@/components/TripPlanner.vue'; // ← NEW
 
 export default {
   data() {
@@ -18,6 +19,7 @@ export default {
       popupApp: null,
       popupEl: null,
       infoWindow: null, // shared InfoWindow
+      lastInsightsProps: null, // ← remember to support "Back"
     };
   },
 
@@ -77,12 +79,13 @@ export default {
 
       map.setOptions({
         mapTypeControl: false,
+        streetViewControl: false,
         center: { lat: -37.81230926513672, lng: 144.96234130859375 },
         mapId: '11149c6c4a20631b72145c7a',
       });
 
       // One shared InfoWindow
-      this.infoWindow = new google.maps.InfoWindow();
+      this.infoWindow = new google.maps.InfoWindow({ maxWidth: 400 });
 
       // Disable default map.data usage
       map.data.setMap(null);
@@ -144,30 +147,23 @@ export default {
             typeof place.location.lat === 'function' ? place.location.lat() : place.location.lat;
           const lng =
             typeof place.location.lng === 'function' ? place.location.lng() : place.location.lng;
-          const link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-            title,
-          )}`;
+          const link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(title)}`;
 
           // anchor to marker; no explicit position
           this.openInfoWindow({ title, address, lat, lng, linkHref: link }, marker, null);
         });
       }
 
-      // POI clicks on the map -> intercept and show the same custom info window
+      // POI clicks on the map -> same custom info window
       await google.maps.importLibrary('places');
       const places = new google.maps.places.PlacesService(map);
 
       map.addListener('click', (e) => {
         if (!e.placeId) return;
-
-        // Stop Google’s default POI bubble
-        e.stop();
+        e.stop(); // stop default POI bubble
 
         places.getDetails(
-          {
-            placeId: e.placeId,
-            fields: ['name', 'formatted_address', 'geometry.location'],
-          },
+          { placeId: e.placeId, fields: ['name', 'formatted_address', 'geometry.location'] },
           (place, status) => {
             if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location)
               return;
@@ -182,18 +178,16 @@ export default {
                 address: place.formatted_address ?? '',
                 lat,
                 lng,
-                linkHref: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                  place.name ?? 'Place',
-                )}`,
+                linkHref: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name ?? 'Place')}`,
               },
-              null, // no anchor
-              loc, // open at this coordinate
+              null,
+              loc,
             );
           },
         );
       });
 
-      // Optional: clicking your marker also reuses the same info window
+      // Clicking your marker also reuses the same info window
       marker.addEventListener('gmp-click', () => {
         const pos = marker.position;
         const lat = typeof pos.lat === 'function' ? pos.lat() : pos.lat;
@@ -214,7 +208,6 @@ export default {
       // Mount MapControls
       this.mountControls();
 
-      // Debug: feature count on zoom
       map.addListener('zoom_changed', () => {
         let count = 0;
         this.lgaLayer.forEach(() => count++);
@@ -222,27 +215,39 @@ export default {
       });
     },
 
-    // Mount Vue component into a detached DIV, reuse shared InfoWindow
-    // Mount Vue component into a detached DIV, reuse shared InfoWindow
-    openInfoWindow(props, anchor, position) {
+    // Helper: mount any Vue component into the shared InfoWindow
+    mountInfoContent(Component, props) {
       if (!this.mapInstance || !this.infoWindow) return;
 
-      // Unmount any previous popup app
+      // Unmount previous
       if (this.popupApp && this.popupEl) {
         this.popupApp.unmount();
         this.popupEl = null;
         this.popupApp = null;
       }
 
-      // Mount your Vue info window content
       const el = document.createElement('div');
-      this.popupApp = createApp(MapInfoWindow, props);
+      this.popupApp = createApp(Component, props);
       this.popupApp.mount(el);
       this.popupEl = el;
 
       this.infoWindow.setContent(el);
+    },
 
-      // Strip Google’s default padding + style close button
+    // Open InfoWindow with the DestinationInsights component
+    openInfoWindow(props, anchor, position) {
+      if (!this.mapInstance || !this.infoWindow) return;
+
+      // Remember insights props so we can come back from the planner
+      this.lastInsightsProps = { ...props };
+
+      // Mount insights with an event handler to swap to planner
+      this.mountInfoContent(DestinationInsights, {
+        ...props,
+        onOpenPlanner: (payload) => this.handleOpenPlanner(payload),
+      });
+
+      // Style tweaks on first open
       const mapDiv = this.mapInstance.getDiv();
       google.maps.event.addListenerOnce(this.infoWindow, 'domready', () => {
         const iwC = mapDiv.querySelector('.gm-style-iw-c');
@@ -268,17 +273,12 @@ export default {
           closeButton.style.height = '24px';
           closeButton.style.position = 'static';
           closeButton.style.margin = '0 0 auto auto';
-
           const span = closeButton.querySelector('span');
-          if (span) {
-            span.style.margin = 'auto';
-          }
+          if (span) span.style.margin = 'auto';
         }
 
         const dialogContainer = mapDiv.querySelector('.gm-style-iw-d');
-        if (dialogContainer) {
-          dialogContainer.style.padding = '0';
-        }
+        if (dialogContainer) dialogContainer.style.padding = '0';
       });
 
       // Open by anchor or position
@@ -290,6 +290,40 @@ export default {
       } else {
         this.infoWindow.open(this.mapInstance);
       }
+    },
+
+    // Swap to TripPlanner after "Plan To"
+    handleOpenPlanner(payload) {
+      // payload: { address, lat, lng, selectedDay, busySeries }
+      this.mountInfoContent(TripPlanner, {
+        address: payload.address,
+        lat: payload.lat,
+        lng: payload.lng,
+        busySeries: payload.busySeries,
+        defaultTravelMinutes: 20,
+        onBack: () => this.handlePlannerBack(),
+        onGoTo: (plan) => this.handlePlannerGoTo(plan),
+      });
+    },
+
+    // Back -> restore DestinationInsights
+    handlePlannerBack() {
+      if (!this.lastInsightsProps) return;
+      this.mountInfoContent(DestinationInsights, {
+        ...this.lastInsightsProps,
+        onOpenPlanner: (payload) => this.handleOpenPlanner(payload),
+      });
+    },
+
+    // Go To -> example: open Google Maps directions to destination
+    handlePlannerGoTo(plan) {
+      // plan contains: address, lat, lng, arrivalTime, suggestedDepartTime, travelMinutes, searchMinutes, status
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
+        plan.address || `${plan.lat},${plan.lng}`,
+      )}&travelmode=driving`;
+      window.open(url, '_blank');
+      // Keep the planner open; or close InfoWindow if you prefer:
+      // this.infoWindow?.close();
     },
 
     mountControls() {

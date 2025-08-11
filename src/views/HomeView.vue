@@ -14,7 +14,6 @@ import {
   Legend,
   type ChartConfiguration,
 } from 'chart.js';
-import SearchBar from '@/components/SearchBar.vue';
 
 Chart.register(
   BarController,
@@ -74,11 +73,10 @@ function getYearSeries(row: PopulationRowRaw): { labels: string[]; values: numbe
 // ---------- Vue component ----------
 export default defineComponent({
   name: 'HomeView',
-  components: { SearchBar },
 
   data() {
     return {
-      epic1baseURL: 'https://u6f6jwcwa0.execute-api.us-east-1.amazonaws.com',
+      epic1baseURL: (import.meta as any).env?.VITE_EPIC1_BASE,
       popChart: null as Chart | null,
       attrChart: null as Chart | null,
       loading: true,
@@ -253,17 +251,15 @@ export default defineComponent({
 
 <template>
   <main style="display: grid; gap: 24px">
-    <SearchBar />
-
     <section>
-      <h2 style="margin: 0 0 8px">Melbourne CBD population (bar)</h2>
+      <h2 style="margin: 0 0 8px">Melbourne CBD population</h2>
       <div style="height: 360px">
         <canvas ref="popCanvas"></canvas>
       </div>
     </section>
 
     <section>
-      <h2 style="margin: 0 0 8px">Victoria vehicle attrition (bars + line)</h2>
+      <h2 style="margin: 0 0 8px">Victoria vehicle attrition</h2>
       <div style="height: 360px">
         <canvas ref="attrCanvas"></canvas>
       </div>
