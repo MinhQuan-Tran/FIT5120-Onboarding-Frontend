@@ -122,7 +122,7 @@ export default defineComponent({
         display: 'flex',
         gap: '8px',
         alignItems: 'center',
-        justifyContent: 'flex-start',
+        justifyContent: 'space-between',
         marginTop: '10px',
       };
     },
@@ -500,6 +500,7 @@ export default defineComponent({
     </a>
 
     <div :style="ctaRowStyle">
+      <div></div>
       <button :style="buttonStyle" type="button" @click="onPlanToClick">Plan To</button>
     </div>
   </div>
