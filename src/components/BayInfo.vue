@@ -15,6 +15,8 @@ const props = defineProps<{
     finish: string;
     isActive?: boolean;
   }>;
+  // NEW: eco badges
+  badges?: string[];
   onBack?: () => void;
 }>();
 
@@ -55,7 +57,7 @@ function onPlanTo() {
 
 <template>
   <div style="min-width: 260px; display: flex; flex-direction: column; gap: 10px; color: #222">
-    <!-- Header (Back removed here) -->
+    <!-- Header -->
     <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
       <div style="display: flex; align-items: center; gap: 8px">
         <div style="font-weight: 700; font-size: 14px; color: #1f2937">Parking bay</div>
@@ -93,6 +95,29 @@ function onPlanTo() {
         {{ statusText }}
       </span>
       <span style="font-size: 11px; color: #9aa1a9">Last seen: {{ niceSeen }}</span>
+    </div>
+
+    <!-- NEW: Eco badges row -->
+    <div v-if="badges?.length" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px">
+      <span
+        v-for="(b, i) in badges"
+        :key="i"
+        style="
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 8px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 600;
+          background: #e8f5e9;
+          color: #2e7d32;
+          border: 1px solid #c8e6c9;
+          white-space: nowrap;
+        "
+      >
+        {{ b }}
+      </span>
     </div>
 
     <div style="border-top: 1px solid #eceff1; margin: 4px 0"></div>
@@ -161,7 +186,7 @@ function onPlanTo() {
       CoT signage times are local. “Now” is evaluated using Australia/Melbourne time.
     </div>
 
-    <!-- Action row: Back + Plan To (like TripPlanner) -->
+    <!-- Actions: Insights (Back) + Plan To -->
     <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 4px">
       <button
         type="button"

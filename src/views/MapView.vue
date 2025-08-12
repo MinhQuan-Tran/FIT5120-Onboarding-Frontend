@@ -5,8 +5,15 @@ import DestinationInsights from '@/components/DestinationInsights.vue';
 import TripPlanner from '@/components/TripPlanner.vue';
 import BayInfo from '@/components/BayInfo.vue';
 
-const EPIC2_BASE = import.meta.env.VITE_EPIC2_BASE; // for busySeries
+const EPIC2_BASE = import.meta.env.VITE_EPIC2_BASE;
 const BUSY_PATH = '/default/epic2/parkingBusyHourly';
+
+// Tram-only config
+const R_TRAM = 200; // meters for "near tram"
+const PREFETCH_RADIUS = 1000; // meters around search center
+const PREFETCH_GRID_DEG = 0.005; // ~550 m grid for prefetch caching
+const PREFETCH_TTL_MS = 10 * 60 * 1000; // 10 min TTL
+const TRAM_GRID_DEG = 0.002; // ~220 m grid for fast candidate lookup
 
 export default {
   data() {
@@ -25,7 +32,7 @@ export default {
       infoWindow: null,
       lastInsightsProps: null,
 
-      // bay state
+      // bays
       parkingMarkers: [],
       baysLoading: false,
       baysError: '',
@@ -33,12 +40,26 @@ export default {
       _baysReqId: 0,
       _markerLib: null,
 
-      // remember last opened bay so planner back returns to it
+      // back-path
       lastBayProps: null,
+
+      // places
+      _placesNewAvailable: false,
+      _legacyPlaces: null,
+
+      // caches
+      _prefetchCache: null, // Map<gridKey, {tramPts, grid, ts}>
+      _tramDebug: localStorage.getItem('tramDebug') === '1', // default off
     };
   },
 
   mounted() {
+    // small toggle helper to enable/disable logs at runtime
+    window.__TramDebug = (on) => {
+      this._tramDebug = !!on;
+      localStorage.setItem('tramDebug', this._tramDebug ? '1' : '0');
+      console.log('[tram] debug:', this._tramDebug);
+    };
     this.loadWhenReady();
   },
 
@@ -64,6 +85,10 @@ export default {
   },
 
   methods: {
+    d(...args) {
+      if (this._tramDebug) console.log('[tram]', ...args);
+    },
+
     async loadWhenReady() {
       if (!this.apiKey) {
         console.error('Google Maps API key is not set.');
@@ -130,6 +155,25 @@ export default {
         }
       }
 
+      // Places + Geometry libs
+      await google.maps.importLibrary('places');
+      try {
+        await google.maps.importLibrary('geometry');
+      } catch {}
+
+      // Detect Places (New) availability
+      this._placesNewAvailable =
+        !!google.maps.places.Place && typeof google.maps.places.Place.searchByText === 'function';
+
+      // Legacy fallback service
+      try {
+        this._legacyPlaces = new google.maps.places.PlacesService(this.mapInstance);
+        this.d('Legacy PlacesService constructed');
+      } catch {
+        this._legacyPlaces = null;
+      }
+      this.d('Places New available:', this._placesNewAvailable);
+
       // Place picker
       const placePicker = document.querySelector('gmpx-place-picker');
       if (placePicker && !placePicker.__popupBound) {
@@ -166,59 +210,36 @@ export default {
         });
       }
 
-      // POI clicks
-      await google.maps.importLibrary('places');
-      const places = new google.maps.places.PlacesService(map);
-
-      map.addListener('click', (e) => {
+      // POI click -> Places (New) fetch
+      this.mapInstance.addListener('click', async (e) => {
         if (!e.placeId) return;
         e.stop();
+        try {
+          const Place = google.maps.places.Place;
+          const place = new Place({ id: e.placeId });
+          await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location'] });
+          const loc = place.location;
+          const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
+          const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
 
-        places.getDetails(
-          { placeId: e.placeId, fields: ['name', 'formatted_address', 'geometry.location'] },
-          (place, status) => {
-            if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location)
-              return;
-
-            const loc = place.geometry.location;
-            const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat;
-            const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
-
-            this.openInfoWindow(
-              {
-                title: place.name ?? 'Place',
-                address: place.formatted_address ?? '',
-                lat,
-                lng,
-                linkHref: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name ?? 'Place')}`,
-              },
-              null,
-              loc,
-            );
-            this.fetchAndRenderBays(lat, lng);
-          },
-        );
+          this.openInfoWindow(
+            {
+              title: place.displayName || 'Place',
+              address: place.formattedAddress || '',
+              lat,
+              lng,
+              linkHref: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.displayName || 'Place')}`,
+            },
+            null,
+            loc,
+          );
+          this.fetchAndRenderBays(lat, lng);
+        } catch (err) {
+          console.warn('Place details fetch failed:', err);
+        }
       });
 
-      // Marker click
-      marker.addEventListener('gmp-click', () => {
-        const pos = marker.position;
-        const lat = typeof pos.lat === 'function' ? pos.lat() : pos.lat;
-        const lng = typeof pos.lng === 'function' ? pos.lng() : pos.lng;
-        this.openInfoWindow(
-          {
-            title: 'Marker',
-            address: 'Selected marker position',
-            lat,
-            lng,
-            linkHref: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
-          },
-          marker,
-          null,
-        );
-        this.fetchAndRenderBays(lat, lng);
-      });
-
+      this._prefetchCache = new Map();
       this.mountControls();
     },
 
@@ -515,7 +536,7 @@ export default {
       return out;
     },
 
-    // ---- Busy series fetch (for TripPlanner) ----
+    // ---- Busy series (TripPlanner)
     todayInMelbourne() {
       const name = new Intl.DateTimeFormat('en-AU', {
         weekday: 'long',
@@ -549,7 +570,177 @@ export default {
       }
     },
 
-    // ---- Markers (keep your LZ yellow early-return) ----
+    // -------------------- Tram prefetch + distance-based check --------------------
+    gridKey(lat, lng) {
+      const la = Math.round(lat / PREFETCH_GRID_DEG) * PREFETCH_GRID_DEG;
+      const lo = Math.round(lng / PREFETCH_GRID_DEG) * PREFETCH_GRID_DEG;
+      return `${la.toFixed(3)},${lo.toFixed(3)}`;
+    },
+
+    asLatLngLiteral(p) {
+      const lat = typeof p.lat === 'function' ? p.lat() : p.lat;
+      const lng = typeof p.lng === 'function' ? p.lng() : p.lng;
+      return { lat, lng };
+    },
+
+    buildTramGrid(points, cellDeg = TRAM_GRID_DEG) {
+      const grid = new Map();
+      const keyFor = (la, lo) => `${la}|${lo}`;
+      for (const p of points) {
+        const la = Math.floor(p.lat / cellDeg);
+        const lo = Math.floor(p.lng / cellDeg);
+        const k = keyFor(la, lo);
+        const arr = grid.get(k);
+        if (arr) arr.push(p);
+        else grid.set(k, [p]);
+      }
+      return { grid, cellDeg };
+    },
+
+    neighborCells(lat, lng, cellDeg = TRAM_GRID_DEG) {
+      const la = Math.floor(lat / cellDeg);
+      const lo = Math.floor(lng / cellDeg);
+      const cells = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          cells.push(`${la + dy}|${lo + dx}`);
+        }
+      }
+      return cells;
+    },
+
+    async prefetchTramPoints(center) {
+      if (!this._prefetchCache) this._prefetchCache = new Map();
+      const key = this.gridKey(center.lat, center.lng);
+      const cached = this._prefetchCache.get(key);
+      if (cached && Date.now() - cached.ts < PREFETCH_TTL_MS) {
+        this.d('Prefetch cache hit:', key);
+        return cached;
+      }
+
+      const Place = google.maps.places.Place;
+      let tramPts = [];
+      const t0 = performance.now();
+
+      try {
+        if (this._placesNewAvailable) {
+          const { places } = await Place.searchByText({
+            fields: ['location'],
+            textQuery: 'tram stop',
+            locationBias: { center, radius: PREFETCH_RADIUS },
+            maxResultCount: 50,
+          });
+          tramPts = (places || []).map((p) => this.asLatLngLiteral(p.location)).filter(Boolean);
+        } else if (this._legacyPlaces) {
+          await new Promise((resolve) => {
+            this._legacyPlaces.textSearch(
+              { query: 'tram stop', location: center, radius: PREFETCH_RADIUS },
+              (results, status) => {
+                if (
+                  status === google.maps.places.PlacesServiceStatus.OK &&
+                  Array.isArray(results)
+                ) {
+                  tramPts = results
+                    .map((r) => r.geometry?.location)
+                    .filter(Boolean)
+                    .map((loc) => this.asLatLngLiteral(loc));
+                }
+                resolve();
+              },
+            );
+          });
+        }
+      } catch (e) {
+        this.d('Prefetch tram error:', e);
+      }
+
+      const { grid, cellDeg } = this.buildTramGrid(tramPts);
+      const ms = Math.round(performance.now() - t0);
+      const payload = { tramPts, grid, cellDeg, ts: Date.now() };
+      this._prefetchCache.set(key, payload);
+      this.d('Prefetch summary:', { grid: key, stops: tramPts.length, ms });
+      return payload;
+    },
+
+    // Fast approximate distance (meters) using equirectangular projection
+    approxDistMeters(a, b) {
+      const toRad = (x) => (x * Math.PI) / 180;
+      const meanLat = toRad((a.lat + b.lat) / 2);
+      const dLat = a.lat - b.lat;
+      const dLng = a.lng - b.lng;
+      const mx = dLng * 111320 * Math.cos(meanLat);
+      const my = dLat * 110540;
+      return Math.hypot(mx, my);
+    },
+
+    computeDistanceMeters(a, b) {
+      const g = google.maps.geometry?.spherical?.computeDistanceBetween;
+      if (g) {
+        const pa = new google.maps.LatLng(a.lat, a.lng);
+        const pb = new google.maps.LatLng(b.lat, b.lng);
+        return g(pa, pb);
+      }
+      return this.approxDistMeters(a, b);
+    },
+
+    annotateBaysWithTram(bays, pre) {
+      const grid = pre.grid;
+      if (!grid || !bays?.length) return bays;
+
+      const radius = R_TRAM;
+      const out = new Array(bays.length);
+      const r2 = radius * radius;
+
+      for (let i = 0; i < bays.length; i++) {
+        const b = bays[i];
+        let nearTram = false;
+
+        // Pull only candidates from neighboring grid cells
+        const cells = this.neighborCells(b.lat, b.lng, pre.cellDeg);
+        const candidates = [];
+        for (const c of cells) {
+          const arr = grid.get(c);
+          if (arr) candidates.push(...arr);
+        }
+
+        // quick approx check first, then exact if geometry available
+        for (let j = 0; j < candidates.length; j++) {
+          const p = candidates[j];
+          // quick squared distance with approx
+          const toRad = (x) => (x * Math.PI) / 180;
+          const meanLat = toRad((b.lat + p.lat) / 2);
+          const dLat = b.lat - p.lat;
+          const dLng = b.lng - p.lng;
+          const mx = dLng * 111320 * Math.cos(meanLat);
+          const my = dLat * 110540;
+          const d2 = mx * mx + my * my;
+          if (d2 <= r2) {
+            // confirm with geometry (if available)
+            if (google.maps.geometry) {
+              if (this.computeDistanceMeters(b, p) <= radius) {
+                nearTram = true;
+                break;
+              }
+            } else {
+              nearTram = true;
+              break;
+            }
+          }
+        }
+
+        const badges = [];
+        if (nearTram) badges.push('Near Tram Stop');
+        out[i] = { ...b, badges };
+      }
+
+      this.d('Annotate pass complete:', {
+        bays: bays.length,
+        tramPts: pre.tramPts?.length ?? 0,
+      });
+      return out;
+    },
+
+    // ---- Pins ----
     async ensureMarkerLib() {
       if (this._markerLib) return this._markerLib;
       this._markerLib = await google.maps.importLibrary('marker');
@@ -560,8 +751,7 @@ export default {
       const { PinElement } = this._markerLib;
 
       const raw = String(label ?? '').trim();
-      const norm = raw.toUpperCase();
-      const compact = norm.replace(/[\s\-_.]/g, '');
+      const compact = raw.toUpperCase().replace(/[\s\-_.]/g, '');
       const isLZ =
         /(LZ|LDZ|LOADING|LOAD|PICK ?UP|PKUP|DELIV)/i.test(raw) ||
         compact.startsWith('LZ') ||
@@ -600,8 +790,8 @@ export default {
       const border = isUnocc ? '#1B5E20' : isOcc ? '#B71C1C' : '#616161';
       const glyphColor = '#FFFFFF';
       const glyphText = isUnocc ? raw || 'P' : '•';
-      const glyphSize = isUnocc ? 9 : 8; // smaller text
-      const scale = isOcc ? 0.66 : 0.98; // occupied smaller
+      const glyphSize = isUnocc ? 9 : 8;
+      const scale = isOcc ? 0.66 : 0.98;
 
       const pin = new PinElement({
         background,
@@ -624,7 +814,6 @@ export default {
 
     async handleBayPlanTo(payload) {
       const busySeries = await this.fetchBusySeries(payload.lat, payload.lng);
-      // Keep a back path to the bay details
       const backToBay = () => this.lastBayProps && this.openBayInfo(null, this.lastBayProps);
 
       this.mountInfoContent(TripPlanner, {
@@ -650,12 +839,12 @@ export default {
         lng: bay.lng,
         kerbsideId: bay.kerbsideId,
         restrictions: bay.restrictions,
+        badges: bay.badges || [],
         onBack: () => this.handleBayBack(),
         onPlanTo: (payload) => this.handleBayPlanTo(payload),
       });
       this.applyInfoWindowChrome(bay.segment || 'Parking bay');
 
-      // Anchor if available, else open at bay coordinates
       if (anchor) {
         this.infoWindow.open({ map: this.mapInstance, anchor });
       } else {
@@ -675,11 +864,18 @@ export default {
 
       try {
         await this.ensureMarkerLib();
+
+        // Fetch bays
         const res = await fetch(this.baysUrl(lat, lng), { mode: 'cors', credentials: 'omit' });
         if (!res.ok) throw new Error(`nearbySegments HTTP ${res.status}`);
         const json = await res.json();
-        const bays = this.selectCurrentBays(json);
-        if (reqId !== this._baysReqId) return;
+        const baysBase = this.selectCurrentBays(json);
+
+        // Prefetch tram stops once, then annotate by distance using spatial grid
+        const pre = await this.prefetchTramPoints({ lat, lng });
+        const bays = this.annotateBaysWithTram(baysBase, pre);
+
+        if (reqId !== this._baysReqId) return; // cancelled
 
         const { AdvancedMarkerElement } = this._markerLib;
         let unocc = 0;
@@ -703,9 +899,11 @@ export default {
         }
 
         this.baysCounts = { unoccupied: unocc, occupied: occ };
+        this.d('Rendered bays. Counts:', this.baysCounts);
       } catch (e) {
         if (reqId !== this._baysReqId) return;
         this.baysError = e?.message || 'Failed to fetch nearby bays';
+        console.error('fetchAndRenderBays error:', e);
       } finally {
         if (reqId === this._baysReqId) this.baysLoading = false;
       }
