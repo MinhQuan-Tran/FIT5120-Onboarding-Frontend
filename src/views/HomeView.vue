@@ -1,5 +1,6 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
+import { RouterLink } from 'vue-router';
 import {
   Chart,
   BarController,
@@ -73,6 +74,7 @@ function getYearSeries(row: PopulationRowRaw): { labels: string[]; values: numbe
 // ---------- Vue component ----------
 export default defineComponent({
   name: 'HomeView',
+  components: { RouterLink },
 
   data() {
     return {
@@ -152,7 +154,7 @@ export default defineComponent({
           labels: data.labels,
           datasets: [
             {
-              label: 'Melbourne CBD – Total population',
+              label: 'Melbourne CBD - Total population',
               data: data.values,
               backgroundColor: 'rgba(41, 98, 255, 0.65)',
               borderColor: '#2962FF',
@@ -164,7 +166,7 @@ export default defineComponent({
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            title: { display: true, text: 'Melbourne CBD – Total population by year' },
+            title: { display: true, text: 'Melbourne CBD - Total population by year' },
             legend: { display: true, position: 'top' },
             tooltip: { mode: 'index', intersect: false },
           },
@@ -220,7 +222,7 @@ export default defineComponent({
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            title: { display: true, text: 'Victoria – Vehicles & Attrition rate' },
+            title: { display: true, text: 'Victoria - Vehicles & Attrition rate' },
             legend: { display: true, position: 'top' },
             tooltip: { mode: 'index', intersect: false },
           },
@@ -250,24 +252,201 @@ export default defineComponent({
 </script>
 
 <template>
-  <main style="display: grid; gap: 24px">
-    <section>
-      <h2 style="margin: 0 0 8px">Melbourne CBD population</h2>
-      <div style="height: 360px">
-        <canvas ref="popCanvas"></canvas>
+  <main class="home">
+    <section class="hero">
+      <div class="hero-content">
+        <h1>ParkingSpy</h1>
+        <p class="tagline">Smarter parking insights for Melbourne CBD</p>
+        <div class="actions">
+          <RouterLink class="btn primary" to="/map">Open interactive map</RouterLink>
+          <a class="btn ghost" href="#insights">See city insights</a>
+        </div>
+      </div>
+      <div class="hero-glow" aria-hidden="true"></div>
+    </section>
+
+    <section class="features">
+      <div class="feature-card">
+        <div class="icon">Map</div>
+        <h3>Explore the map</h3>
+        <p>Search places, view parking bays, and see live status around your destination.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">Tram</div>
+        <h3>Near tram stops</h3>
+        <p>Bays are annotated when they are within walking distance of tram stops.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">Plan</div>
+        <h3>Plan your trip</h3>
+        <p>Get a quick plan to your destination and jump to Google Maps directions.</p>
       </div>
     </section>
 
-    <section>
-      <h2 style="margin: 0 0 8px">Victoria vehicle attrition</h2>
-      <div style="height: 360px">
-        <canvas ref="attrCanvas"></canvas>
+    <section id="insights" class="insights">
+      <div class="card">
+        <h2>Melbourne CBD population</h2>
+        <div class="chart">
+          <canvas ref="popCanvas"></canvas>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Victoria vehicle attrition</h2>
+        <div class="chart">
+          <canvas ref="attrCanvas"></canvas>
+        </div>
       </div>
     </section>
 
-    <p v-if="loading" style="opacity: 0.7">Loading charts…</p>
-    <p v-if="errorMsg" style="color: #d32f2f">{{ errorMsg }}</p>
+    <p v-if="loading" class="status muted">Loading charts...</p>
+    <p v-if="errorMsg" class="status error">{{ errorMsg }}</p>
   </main>
 </template>
 
-<style scoped></style>
+<style scoped>
+.home {
+  display: grid;
+  gap: 24px;
+}
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, rgba(41, 98, 255, 0.08) 0%, rgba(41, 98, 255, 0.02) 100%);
+  border-radius: 16px;
+  padding: 40px 24px;
+}
+
+.hero-content {
+  max-width: 960px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: 40px;
+  line-height: 1.1;
+  color: var(--color-heading);
+  margin-bottom: 8px;
+}
+
+.tagline {
+  font-size: 18px;
+  color: var(--vt-c-text-light-2);
+}
+
+.actions {
+  display: inline-flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  font-weight: 600;
+}
+
+.btn.primary {
+  background: #2962ff;
+  color: white;
+  border-color: #1e4fe3;
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--color-heading);
+}
+
+.hero-glow {
+  position: absolute;
+  inset: -40% -20% auto -20%;
+  height: 240px;
+  background: radial-gradient(60% 60% at 50% 50%, rgba(41, 98, 255, 0.35) 0%, rgba(41, 98, 255, 0) 70%);
+  pointer-events: none;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.feature-card {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 16px;
+  background: var(--color-background);
+}
+
+.feature-card .icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(41, 98, 255, 0.12);
+  margin-bottom: 8px;
+  font-size: 20px;
+}
+
+.feature-card h3 {
+  font-size: 18px;
+  margin-bottom: 6px;
+  color: var(--color-heading);
+}
+
+.feature-card p {
+  color: var(--vt-c-text-light-2);
+}
+
+.insights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 16px;
+  background: var(--color-background);
+}
+
+.card h2 {
+  margin-bottom: 8px;
+}
+
+.chart {
+  height: 360px;
+}
+
+.status {
+  margin-top: 4px;
+}
+
+.status.muted {
+  opacity: 0.7;
+}
+
+.status.error {
+  color: #d32f2f;
+}
+
+@media (max-width: 900px) {
+  .features {
+    grid-template-columns: 1fr;
+  }
+  .insights {
+    grid-template-columns: 1fr;
+  }
+  .hero h1 {
+    font-size: 32px;
+  }
+}
+</style>
